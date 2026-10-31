@@ -17,13 +17,17 @@ Test 1 status: PASS.
 
 Evidence: VS Code terminal screenshots showing both test results.
 ### QA-02 | 
-**Additional unit test — confidence threshold**
+Reject Low-Confidence Speaker Predictions
 
-- Input confidence values: 0.42, 0.85, and 0.60.
-- Expected result: Reject 0.42; accept 0.85 and 0.60.
-- Actual result: Record the terminal output.
-- Status: PASS if all three assertions succeed.
-- Limitation: This tests the threshold decision independently, not end-to-end speaker recognition or attendance prevention.
+Status: PARTIAL PASS — unit test passed; end-to-end speaker recognition not tested.
+
+Test performed: Ran python test_low_confidence.py to test confidence values of 0.42, 0.85, and 0.60 against the threshold of 0.60.
+
+Expected result: A confidence of 0.42 is rejected, while 0.85 and the boundary value 0.60 are accepted.
+
+Actual result: All three threshold unit tests passed.
+
+Limitation: This test validates the threshold decision independently. It does not verify confidence scores produced by a trained speaker-recognition model.
 
 ### QA-03 | Prevent Duplicate Attendance Records
 

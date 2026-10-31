@@ -51,13 +51,21 @@ Actual result: The program raised a ValueError stating that at least 2 student f
 Status: PASS — the program correctly rejected insufficient training data.
 
 Evidence: Screenshot of the VS Code terminal showing the command and error message.
-| QA-05 | Noisy or different-microphone recording | Recognition limitations are reported; uncertain cases are not automatically accepted | High | Controlled test results |
+### QA-05: Test Speaker Recognition Under Noisy Conditions
 
-These are candidate QA issues to create in GitHub. They are not claims that issues have already been created or resolved.
+**Status:** NOT TESTED — requires suitable voice recordings.
 
-## Acceptance criteria
-- Invalid audio is rejected with a useful message.
-- Low-confidence predictions do not create attendance records.
-- CSV has a header and a timestamp for every accepted record.
-- Each issue includes reproduction steps, root-cause notes, a proposed fix, and test evidence.
-- No private or non-consensual voice recordings are committed to the repository.
+**Test objective:** Evaluate whether background noise affects speaker identification and attendance accuracy.
+
+**Test procedure:**
+1. Obtain consented voice recordings from the enrolled participants.
+2. Prepare clean and noisy versions of the same recordings.
+3. Run the trained speaker-recognition model on both versions.
+4. Compare identification results and confidence scores.
+5. Record incorrect identifications, rejected predictions, and processing errors.
+
+**Expected result:** The system should reject uncertain predictions rather than incorrectly marking attendance.
+
+**Actual result:** Testing with real speaker recordings has not been performed.
+
+**Limitation:** Silent WAV files can validate empty and short-recording error handling, but they cannot demonstrate speaker-recognition accuracy under noise.

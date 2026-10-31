@@ -1,11 +1,19 @@
-"""Educational speaker-identification demo using MFCC features and an SVM.
 
-Expected training layout:
-data/train/student_001/*.wav
-data/train/student_002/*.wav
-
-Use consented audio only. This is not a production biometric system.
 """
+AI-Based Smart Classroom Attendance System Using Voice Recognition
+
+Training data structure:
+data/train/
+    student_1/
+        recording1.wav
+        recording2.wav
+    student_2/
+        recording1.wav
+        recording2.wav
+
+Use voice recordings only with the students' informed consent.
+"""
+
 import argparse
 import csv
 from datetime import datetime
@@ -14,66 +22,226 @@ from pathlib import Path
 import librosa
 import numpy as np
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+
 
 SAMPLE_RATE = 16000
 THRESHOLD = 0.60
+MIN_AUDIO_SAMPLES = SAMPLE_RATE // 2  # 0.5 seconds
+
 
 def features(path: Path) -> np.ndarray:
-    audio, _ = librosa.load(path, sr=SAMPLE_RATE, mono=True)
-    if len(audio) < SAMPLE_RATE // 2:
-        raise ValueError(f"Recording too short (minimum 0.5 seconds): {path}")
-    mfcc = librosa.feature.mfcc(y=audio, sr=SAMPLE_RATE, n_mfcc=20)
-    # Mean and standard deviation make a fixed-length feature vector.
-    return np.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1)])
+    """Validate an audio file and extract MFCC features."""
+
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"Audio file does not exist: {path}")
+
+    try:
+        audio, _ = librosa.load(
+            str(path),
+            sr=SAMPLE_RATE,
+            mono=True
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Unable to read audio file: {path}. "
+            "Please provide a valid audio recording."
+        ) from exc
+
+    if len(audio) == 0:
+        raise ValueError(f"Audio recording is empty: {path}")
+
+    if len(audio) < MIN_AUDIO_SAMPLES:
+        raise ValueError(
+            f"Recording too short (minimum 0.5 seconds): {path}"
+        )
+
+    mfcc = librosa.feature.mfcc(
+        y=audio,
+        sr=SAMPLE_RATE,
+        n_mfcc=20
+    )
+
+    return np.concatenate([
+        mfcc.mean(axis=1),
+        mfcc.std(axis=1)
+    ])
+
 
 def load_training_data(root: Path):
-    X, y = [], []
-    for person_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+    """Load valid recordings and validate the training dataset."""
+
+    if not root.exists() or not root.is_dir():
+        raise ValueError(
+            f"Training directory does not exist: {root}"
+        )
+
+    X = []
+    y = []
+
+    for person_dir in sorted(root.iterdir()):
+        if not person_dir.is_dir():
+            continue
+
         for wav in sorted(person_dir.glob("*.wav")):
             try:
                 X.append(features(wav))
                 y.append(person_dir.name)
-            except Exception as exc:
+            except ValueError as exc:
                 print(f"Skipping {wav}: {exc}")
+
     if len(set(y)) < 2 or len(X) < 4:
-        raise ValueError("Need at least 2 student folders and 4 valid WAV recordings total.")
+        raise ValueError(
+            "Need at least 2 student folders and "
+            "4 valid WAV recordings total."
+        )
+
     return np.asarray(X), np.asarray(y)
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--train", type=Path, required=True, help="Folder containing one subfolder per student")
-    parser.add_argument("--test", type=Path, required=True, help="WAV file to identify")
-    parser.add_argument("--attendance", type=Path, default=Path("attendance.csv"))
-    args = parser.parse_args()
 
-    X, labels = load_training_data(args.train)
-    encoder = LabelEncoder()
-    y = encoder.fit_transform(labels)
-    model = make_pipeline(StandardScaler(), SVC(kernel="rbf", probability=True, random_state=42))
+def train_model(X: np.ndarray, y: np.ndarray):
+    """Train an SVM classifier for speaker identification."""
+
+    model = make_pipeline(
+        StandardScaler(),
+        SVC(
+            kernel="rbf",
+            probability=True,
+            class_weight="balanced",
+            random_state=42
+        )
+    )
+
     model.fit(X, y)
+    return model
 
-    test_x = features(args.test).reshape(1, -1)
-    probabilities = model.predict_proba(test_x)[0]
+
+def predict_student(model, audio_path: Path):
+    """Identify a student only when confidence meets the threshold."""
+
+    sample = features(audio_path).reshape(1, -1)
+
+    probabilities = model.predict_proba(sample)[0]
     best_index = int(np.argmax(probabilities))
-    student_id = encoder.inverse_transform([model.classes_[best_index]])[0]
+
+    student_id = str(model.classes_[best_index])
     confidence = float(probabilities[best_index])
-    print(f"Prediction: {student_id}; confidence={confidence:.2f}")
 
     if confidence < THRESHOLD:
-        print("Low confidence: attendance NOT marked. Please verify manually.")
-        return
+        return None, confidence
 
-    args.attendance.parent.mkdir(parents=True, exist_ok=True)
-    new_file = not args.attendance.exists()
-    with args.attendance.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if new_file:
-            writer.writerow(["timestamp", "student_id", "confidence", "audio_file"])
-        writer.writerow([datetime.now().isoformat(timespec="seconds"), student_id,
-                         f"{confidence:.3f}", args.test.name])
-    print(f"Attendance recorded in {args.attendance}")
+    return student_id, confidence
+
+
+def mark_attendance(student_id: str, csv_path: Path):
+    """Record attendance once per student per calendar day."""
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    existing_records = []
+
+    if csv_path.exists() and csv_path.stat().st_size > 0:
+        with csv_path.open(
+            "r",
+            newline="",
+            encoding="utf-8"
+        ) as file:
+            existing_records = list(csv.DictReader(file))
+
+    for record in existing_records:
+        if (
+            record.get("student_id") == student_id
+            and record.get("date") == today
+        ):
+            print(
+                f"Attendance already recorded for "
+                f"{student_id} today."
+            )
+            return
+
+    file_exists = (
+        csv_path.exists() and csv_path.stat().st_size > 0
+    )
+
+    with csv_path.open(
+        "a",
+        newline="",
+        encoding="utf-8"
+    ) as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=["student_id", "date", "timestamp"]
+        )
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({
+            "student_id": student_id,
+            "date": today,
+            "timestamp": timestamp
+        })
+
+    print(f"Attendance marked for {student_id}.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="AI Smart Classroom Voice Attendance"
+    )
+
+    parser.add_argument(
+        "--train",
+        type=Path,
+        default=Path("data/train"),
+        help="Directory containing student folders and WAV files"
+    )
+
+    parser.add_argument(
+        "--test",
+        type=Path,
+        required=True,
+        help="Path to the WAV recording to identify"
+    )
+
+    parser.add_argument(
+        "--attendance",
+        type=Path,
+        default=Path("attendance.csv"),
+        help="CSV file where attendance will be stored"
+    )
+
+    args = parser.parse_args()
+
+    try:
+        X, y = load_training_data(args.train)
+        model = train_model(X, y)
+
+        student_id, confidence = predict_student(
+            model,
+            args.test
+        )
+
+        print(f"Prediction confidence: {confidence:.2%}")
+
+        if student_id is None:
+            print(
+                "Low-confidence prediction. Attendance not marked; "
+                "manual review required."
+            )
+            return
+
+        mark_attendance(student_id, args.attendance)
+
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()
